@@ -77,15 +77,15 @@
             <div class="flex items-center gap-2">
                 <label for="model-select" class="text-sm font-medium text-slate-600">Model:</label>
                 <select id="model-select" class="bg-slate-50 border border-slate-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <option value="gemini-1.5-flash">Gemini 1.5 Flash (Fast Parsing)</option>
-                    <option value="gemini-1.5-pro">Gemini 1.5 Pro (Deep Reasoning)</option>
+                    <option value="gemini-1.5-flash-latest">Gemini 1.5 Flash (Fast Parsing)</option>
+                    <option value="gemini-1.5-pro-latest">Gemini 1.5 Pro (Deep Reasoning)</option>
                 </select>
             </div>
 
             <!-- Secure Connection / API Key Input -->
             <div class="flex items-center gap-3 border-l border-slate-200 pl-6">
                 <div class="relative">
-                    <input type="password" id="api-key-input" placeholder="Enter API Key / Proxy Token" class="bg-slate-50 border border-slate-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-56 pr-8" />
+                    <input type="password" id="api-key-input" placeholder="Enter Google API Key" class="bg-slate-50 border border-slate-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-56 pr-8" />
                     <i class="ph ph-key absolute right-2 top-2 text-slate-400"></i>
                 </div>
                 <button id="connect-btn" class="px-4 py-1.5 bg-slate-800 text-white text-sm rounded-md hover:bg-slate-700 transition-colors">
@@ -437,25 +437,25 @@ User Attributes Profile:
                         throw new Error("Proxy connection refused: Please click 'Connect' to establish a secure channel.");
                     }
 
-                    // Use the user's provided API key from the input, OR fallback to the environment injected key
-                    const userProvidedKey = ui.apiKeyInput.value.trim();
+                    // Clean the user input and handle accidental quotes
+                    let userProvidedKey = ui.apiKeyInput.value.trim();
+                    userProvidedKey = userProvidedKey.replace(/^["']|["']$/g, '');
                     const finalApiKey = userProvidedKey || apiKey;
 
                     if (!finalApiKey && typeof __app_id === 'undefined') {
                         throw new Error("Missing API Key. Please provide a valid key in the top navigation bar to authenticate.");
                     }
 
-                    // Map the selected model to the appropriate endpoint model 
-                    // Real Google API keys typically start with 'AIza'. 
-                    // If deployed externally with a real key, we use standard production models.
-                    // If running inside the Canvas preview, we must use the specific internal preview model.
+                    // Trust the dropdown model by default (e.g., gemini-1.5-flash-latest)
                     let actualModelToUse = modelType;
-                    const isRealApiKey = finalApiKey.startsWith('AIza');
 
-                    if (!isRealApiKey) {
-                        actualModelToUse = 'gemini-2.5-flash-preview-09-2025'; // Required for Canvas internal proxy
-                    } else if (actualModelToUse === 'gemini-2.5-flash-preview-09-2025' || actualModelToUse === 'gemini-pro-mock') {
-                        actualModelToUse = 'gemini-1.5-flash'; // Fallback if old values are somehow passed
+                    // STRICT ENVIRONMENT CHECK:
+                    // Only force the internal 2.5-flash-preview model if we are running purely 
+                    // inside the Canvas environment AND the user hasn't provided their own key.
+                    const isCanvasEnvironment = typeof __app_id !== 'undefined' && !userProvidedKey;
+                    
+                    if (isCanvasEnvironment) {
+                        actualModelToUse = 'gemini-2.5-flash-preview-09-2025';
                     }
 
                     const systemInstruction = `You are the AI core of the IAM Lifecycle Orchestrator. 
