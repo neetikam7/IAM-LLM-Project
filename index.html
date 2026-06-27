@@ -73,17 +73,8 @@
         </div>
         
         <div class="flex items-center gap-6">
-            <!-- Model Switcher Abstraction -->
-            <div class="flex items-center gap-2">
-                <label for="model-select" class="text-sm font-medium text-slate-600">Model:</label>
-                <select id="model-select" class="bg-slate-50 border border-slate-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                    <option value="gemini-1.5-flash-latest">Gemini 1.5 Flash (Fast Parsing)</option>
-                    <option value="gemini-1.5-pro-latest">Gemini 1.5 Pro (Deep Reasoning)</option>
-                </select>
-            </div>
-
             <!-- Secure Connection / API Key Input -->
-            <div class="flex items-center gap-3 border-l border-slate-200 pl-6">
+            <div class="flex items-center gap-3">
                 <div class="relative">
                     <input type="password" id="api-key-input" placeholder="Enter Google API Key" class="bg-slate-50 border border-slate-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-56 pr-8" />
                     <i class="ph ph-key absolute right-2 top-2 text-slate-400"></i>
@@ -367,7 +358,6 @@
                 connectBtn: document.getElementById('connect-btn'),
                 statusDot: document.getElementById('status-dot'),
                 statusText: document.getElementById('status-text'),
-                modelSelect: document.getElementById('model-select'),
                 langSelect: document.getElementById('lang-select'),
                 audioToggle: document.getElementById('audio-toggle'),
                 
@@ -432,7 +422,7 @@ User Attributes Profile:
 
             // --- Security / Proxy Layer Abstraction ---
             class SecureAPIProxy {
-                static async generateResponse(promptText, modelType) {
+                static async generateResponse(promptText) {
                     if (!state.isConnected) {
                         throw new Error("Proxy connection refused: Please click 'Connect' to establish a secure channel.");
                     }
@@ -446,17 +436,13 @@ User Attributes Profile:
                         throw new Error("Missing API Key. Please provide a valid key in the top navigation bar to authenticate.");
                     }
 
-                    // Trust the dropdown model by default (e.g., gemini-1.5-flash-latest)
-                    let actualModelToUse = modelType;
-
-                    // STRICT ENVIRONMENT CHECK:
-                    // Only force the internal 2.5-flash-preview model if we are running purely 
-                    // inside the Canvas environment AND the user hasn't provided their own key.
-                    const isCanvasEnvironment = typeof __app_id !== 'undefined' && !userProvidedKey;
-                    
-                    if (isCanvasEnvironment) {
-                        actualModelToUse = 'gemini-2.5-flash-preview-09-2025';
-                    }
+                    // Array of models to try sequentially
+                    const modelsToTry = [
+                        'gemini-2.5-flash', 
+                        'gemini-2.5-flash-preview-09-2025', 
+                        'gemini-1.5-flash'
+                    ];
+                    let lastError = null;
 
                     const systemInstruction = `You are the AI core of the IAM Lifecycle Orchestrator. 
 Analyze the provided policy document text against the user's attributes. 
@@ -474,19 +460,28 @@ ${getContextString()}
 ${promptText}
                     `;
 
-                    const url = `https://generativelanguage.googleapis.com/v1beta/models/${actualModelToUse}:generateContent?key=${finalApiKey}`;
-
                     const payload = {
                         contents: [{ parts: [{ text: fullQuery }] }],
                         systemInstruction: { parts: [{ text: systemInstruction }] }
                     };
 
-                    try {
-                        return await this.fetchWithRetry(url, payload);
-                    } catch (error) {
-                        console.error("Backend Proxy Error:", error);
-                        throw new Error("API request failed. If deployed externally, ensure your API key is valid. Details: " + error.message);
+                    // Iterate through fallback models until one succeeds
+                    for (const model of modelsToTry) {
+                        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${finalApiKey}`;
+                        try {
+                            return await this.fetchWithRetry(url, payload);
+                        } catch (error) {
+                            console.warn(`Model ${model} failed:`, error.message);
+                            lastError = error;
+                            // If forbidden, stop entirely. If 404 or other errors, try the next model.
+                            if (error.message.includes("403")) {
+                                throw error;
+                            }
+                            continue;
+                        }
                     }
+
+                    throw new Error("API request failed across all fallback models. Last error: " + (lastError ? lastError.message : "Unknown error"));
                 }
 
                 static async fetchWithRetry(url, payload, retries = 3) {
@@ -502,6 +497,9 @@ ${promptText}
                                 if (response.status === 403) {
                                     throw new Error("403 Forbidden - Invalid API Key or Permissions.");
                                 }
+                                if (response.status === 404) {
+                                    throw new Error("404 Not Found - Model unavailable.");
+                                }
                                 throw new Error(`HTTP error! status: ${response.status}`);
                             }
                             
@@ -512,6 +510,8 @@ ${promptText}
                                 throw new Error("Unexpected API response structure.");
                             }
                         } catch (err) {
+                            // Do not retry 4xx client errors
+                            if (err.message.includes("403") || err.message.includes("404")) throw err;
                             if (i === retries - 1) throw err;
                             await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
                         }
@@ -580,8 +580,7 @@ ${promptText}
                 appendMessage('system_loading', '');
 
                 try {
-                    const selectedModel = ui.modelSelect.value;
-                    const response = await SecureAPIProxy.generateResponse(promptText, selectedModel);
+                    const response = await SecureAPIProxy.generateResponse(promptText);
                     removeLoading();
                     appendMessage('bot', response);
                     
@@ -622,8 +621,7 @@ ${promptText}
                 `;
 
                 try {
-                    const selectedModel = ui.modelSelect.value;
-                    const response = await SecureAPIProxy.generateResponse(promptText, selectedModel);
+                    const response = await SecureAPIProxy.generateResponse(promptText);
                     
                     // Parse markdown to HTML using marked.js
                     let formattedHTML = "";
@@ -743,7 +741,7 @@ ${promptText}
                 `;
 
                 try {
-                    const response = await SecureAPIProxy.generateResponse(`Translate the following text to ${targetLang}. Return ONLY the translated text formatted in markdown:\n\n${textToTranslate}`, ui.modelSelect.value);
+                    const response = await SecureAPIProxy.generateResponse(`Translate the following text to ${targetLang}. Return ONLY the translated text formatted in markdown:\n\n${textToTranslate}`);
                     ui.generatedView.innerHTML = typeof marked !== 'undefined' ? marked.parse(response) : `<pre>${response}</pre>`;
                     
                     if (state.useTTS) handleTTS(ui.generatedView.innerText);
