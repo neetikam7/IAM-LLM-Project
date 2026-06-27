@@ -82,10 +82,10 @@
                 </select>
             </div>
 
-            <!-- Secure Connection / API Key Proxy Input -->
+            <!-- Secure Connection / API Key Input -->
             <div class="flex items-center gap-3 border-l border-slate-200 pl-6">
                 <div class="relative">
-                    <input type="password" id="api-key-input" placeholder="Enter Proxy Auth Token" class="bg-slate-50 border border-slate-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-48 pr-8" />
+                    <input type="password" id="api-key-input" placeholder="Enter API Key / Proxy Token" class="bg-slate-50 border border-slate-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-56 pr-8" />
                     <i class="ph ph-key absolute right-2 top-2 text-slate-400"></i>
                 </div>
                 <button id="connect-btn" class="px-4 py-1.5 bg-slate-800 text-white text-sm rounded-md hover:bg-slate-700 transition-colors">
@@ -133,7 +133,7 @@
                         <label class="block text-sm font-medium text-slate-700 mb-3">Target User Attributes</label>
                         <div class="space-y-3">
                             <div>
-                                <select class="w-full text-sm border-slate-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500" id="attr-division">
+                                <select class="w-full text-sm border-slate-300 rounded-md shadow-sm focus:border-blue-500 focus:ring-blue-500 py-2 px-3 border" id="attr-division">
                                     <option value="">Select Division</option>
                                     <option value="Corporate">Corporate</option>
                                     <option value="Retail">Retail</option>
@@ -221,17 +221,24 @@
                 
                 <div class="flex-1 bg-slate-100 flex items-center justify-center p-4 overflow-hidden relative" id="middle-view-container">
                     
-                    <!-- Placeholder for PDF.js or Iframe -->
+                    <!-- Placeholder for Viewer -->
                     <div id="preview-placeholder" class="text-center w-full">
                         <i class="ph ph-file-search text-6xl text-slate-300 mb-4 block"></i>
                         <p class="text-slate-500 font-medium">Upload a policy document to preview</p>
                     </div>
 
-                    <!-- Actual File Viewer -->
-                    <iframe id="file-viewer" class="hidden w-full h-full border-none shadow-sm bg-white rounded-lg" title="Document Preview"></iframe>
+                    <!-- Actual File Viewer using native browser <embed> instead of <iframe> -->
+                    <embed id="file-viewer" type="application/pdf" class="hidden w-full h-full border-none shadow-sm bg-white rounded-lg" title="Document Preview" />
                     
-                    <!-- Mock Document View -->
+                    <!-- Mock Document View (Fallback for Non-PDFs) -->
                     <div id="mock-doc-view" class="hidden w-full h-full bg-white shadow-md overflow-y-auto p-8 text-sm leading-relaxed border border-slate-200">
+                        <div class="bg-blue-50 border border-blue-200 text-blue-700 px-4 py-3 rounded mb-6 flex items-center gap-3">
+                            <i class="ph ph-info text-xl"></i>
+                            <div>
+                                <p class="font-semibold text-sm">Rich Preview Unavailable</p>
+                                <p class="text-xs">Native viewing is optimized for PDFs. Generating structured fallback visualization for this document type.</p>
+                            </div>
+                        </div>
                         <h1 class="text-xl font-bold mb-4 border-b pb-2">Information Security: Role-Based Access Control Matrix</h1>
                         <p class="mb-4 text-slate-600">Confidential - Internal Use Only</p>
                         <table class="w-full text-left border-collapse mt-4">
@@ -369,7 +376,7 @@
                 sendBtn: document.getElementById('send-btn'),
                 
                 promptBtns: document.querySelectorAll('.prompt-btn'),
-                vizBtns: document.querySelectorAll('.viz-btn'), // New Visualization Buttons
+                vizBtns: document.querySelectorAll('.viz-btn'), // Visualization Buttons
 
                 msgOverlay: document.getElementById('msg-overlay'),
                 msgTitle: document.getElementById('msg-title'),
@@ -390,6 +397,7 @@
             let state = {
                 isConnected: false,
                 hasFile: false,
+                isPdf: false,
                 extractedDocumentText: "MOCK_DOCUMENT_TEXT: Confirmed Birthright Rules: Corp/HR/FTE -> ActiveDirectory, Workday_Read, O365. Tech/Eng/FTE -> ActiveDirectory, GitHub, AWS_Dev_Read. SoD Conflicts: Cannot have AWS_Prod_Admin and AWS_Dev_Admin together.", // Mock extraction
                 isProcessing: false,
                 useTTS: false
@@ -429,9 +437,15 @@ User Attributes Profile:
                         throw new Error("Proxy connection refused: Please click 'Connect' to establish a secure channel.");
                     }
 
+                    // Map the selected model to the appropriate endpoint model 
                     let actualModelToUse = 'gemini-2.5-flash-preview-09-2025';
-                    if (modelType === 'gemini-pro-mock') {
-                        console.log("Backend Proxy: Routing 'Pro' request to available high-capacity endpoint (Flash Preview).");
+
+                    // Use the user's provided API key from the input, OR fallback to the environment injected key
+                    const userProvidedKey = ui.apiKeyInput.value.trim();
+                    const finalApiKey = userProvidedKey || apiKey;
+
+                    if (!finalApiKey) {
+                        throw new Error("Missing API Key. Please provide a valid key in the top navigation bar to authenticate.");
                     }
 
                     const systemInstruction = `You are the AI core of the IAM Lifecycle Orchestrator. 
@@ -450,7 +464,7 @@ ${getContextString()}
 ${promptText}
                     `;
 
-                    const url = `https://generativelanguage.googleapis.com/v1beta/models/${actualModelToUse}:generateContent?key=${apiKey}`;
+                    const url = `https://generativelanguage.googleapis.com/v1beta/models/${actualModelToUse}:generateContent?key=${finalApiKey}`;
 
                     const payload = {
                         contents: [{ parts: [{ text: fullQuery }] }],
@@ -461,7 +475,7 @@ ${promptText}
                         return await this.fetchWithRetry(url, payload);
                     } catch (error) {
                         console.error("Backend Proxy Error:", error);
-                        throw new Error("Secure API layer failed to process the request. " + error.message);
+                        throw new Error("API request failed. If deployed externally, ensure your API key is valid. Details: " + error.message);
                     }
                 }
 
@@ -474,7 +488,12 @@ ${promptText}
                                 body: JSON.stringify(payload)
                             });
                             
-                            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                            if (!response.ok) {
+                                if (response.status === 403) {
+                                    throw new Error("403 Forbidden - Invalid API Key or Permissions.");
+                                }
+                                throw new Error(`HTTP error! status: ${response.status}`);
+                            }
                             
                             const data = await response.json();
                             if (data.candidates && data.candidates[0].content.parts[0].text) {
@@ -539,7 +558,7 @@ ${promptText}
                 if (!promptText.trim() || state.isProcessing) return;
                 
                 if (!state.isConnected) {
-                    showMessage("Connection Required", "Please click 'Connect' to establish a secure channel via the proxy auth token.");
+                    showMessage("Connection Required", "Please click 'Connect' to establish a secure channel via the API Key.");
                     return;
                 }
 
@@ -571,13 +590,14 @@ ${promptText}
             // --- Visualization Rendering Logic ---
             async function handleVizRequest(promptText, title) {
                 if (!state.isConnected) {
-                    showMessage("Connection Required", "Please click 'Connect' to establish a secure channel via the proxy auth token.");
+                    showMessage("Connection Required", "Please click 'Connect' to establish a secure channel.");
                     return;
                 }
 
                 // Switch UI to Generated View
                 ui.previewPlaceholder.classList.add('hidden');
                 ui.mockDocView.classList.add('hidden');
+                ui.fileViewer.classList.add('hidden');
                 ui.generatedView.classList.remove('hidden');
                 ui.backToDocBtn.classList.remove('hidden');
                 ui.headerDivider.classList.remove('hidden');
@@ -627,7 +647,11 @@ ${promptText}
                 ui.docTitleText.textContent = 'Document Preview';
 
                 if (state.hasFile) {
-                    ui.fileViewer.classList.remove('hidden');
+                    if (state.isPdf) {
+                        ui.fileViewer.classList.remove('hidden');
+                    } else {
+                        ui.mockDocView.classList.remove('hidden');
+                    }
                 } else {
                     ui.previewPlaceholder.classList.remove('hidden');
                 }
@@ -690,8 +714,9 @@ ${promptText}
                     textToTranslate = ui.generatedView.innerText;
                 } else if (state.hasFile) {
                     textToTranslate = state.extractedDocumentText;
-                    // Switch to generated view because we can't alter the DOM inside the raw file iframe natively
+                    // Switch to generated view
                     ui.fileViewer.classList.add('hidden');
+                    ui.mockDocView.classList.add('hidden');
                     ui.generatedView.classList.remove('hidden');
                     ui.backToDocBtn.classList.remove('hidden');
                     ui.headerDivider.classList.remove('hidden');
@@ -718,11 +743,19 @@ ${promptText}
             });
 
             ui.connectBtn.addEventListener('click', () => {
+                // Determine if key is present (either provided by user or environment)
+                const hasKey = ui.apiKeyInput.value.trim() !== '' || apiKey !== '';
+                
+                if (!hasKey) {
+                    showMessage("API Key Missing", "Please enter an API Key to connect to the external environment.");
+                    return;
+                }
+
                 state.isConnected = true;
                 ui.statusDot.classList.replace('bg-red-500', 'bg-emerald-500');
                 ui.statusText.textContent = "Connected (Secure)";
                 ui.statusText.classList.replace('text-red-500', 'text-emerald-600');
-                showMessage("Secure Channel Established", "Successfully authenticated with backend proxy. Ready for orchestration.");
+                showMessage("Secure Channel Established", "Successfully authenticated API Key context. Ready for orchestration.");
             });
 
             ui.sendBtn.addEventListener('click', () => handleSendMessage(ui.chatInput.value));
@@ -771,6 +804,7 @@ ${promptText}
 
             ui.removeFileBtn.addEventListener('click', () => {
                 state.hasFile = false;
+                state.isPdf = false;
                 ui.uploadedFileInfo.classList.add('hidden');
                 ui.dropZone.classList.remove('hidden');
                 
@@ -778,6 +812,7 @@ ${promptText}
                 if (ui.generatedView.classList.contains('hidden')) {
                     ui.previewPlaceholder.classList.remove('hidden');
                     ui.fileViewer.classList.add('hidden');
+                    ui.mockDocView.classList.add('hidden');
                     ui.fileViewer.src = '';
                 }
                 
@@ -793,16 +828,25 @@ ${promptText}
                     ui.fileName.textContent = file.name;
                     ui.uploadedFileInfo.classList.remove('hidden');
                     
-                    // Show the actual file in the iframe
+                    // Determine if the file is a PDF
+                    state.isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
+
+                    // Show the file or fallback depending on type
                     if (ui.generatedView.classList.contains('hidden')) {
                         ui.previewPlaceholder.classList.add('hidden');
-                        ui.mockDocView.classList.add('hidden');
-                        ui.fileViewer.src = fileURL;
-                        ui.fileViewer.classList.remove('hidden');
+                        
+                        if (state.isPdf) {
+                            ui.mockDocView.classList.add('hidden');
+                            ui.fileViewer.src = fileURL;
+                            ui.fileViewer.classList.remove('hidden');
+                        } else {
+                            ui.fileViewer.classList.add('hidden');
+                            ui.mockDocView.classList.remove('hidden');
+                        }
                     }
                     
                     state.hasFile = true;
-                    // Note: Browsers block reading raw text out of file iframes for security, 
+                    // Note: Browsers block reading raw text out of viewers natively for security, 
                     // so we populate a mocked extraction for the TTS and Translation features.
                     state.extractedDocumentText = `[Content extracted from ${file.name}]\n\nInformation Security: Role-Based Access Control Matrix\nConfidential - Internal Use Only\n\n- Corporate HR FTE: ActiveDirectory, Workday_Read, O365_E3, Slack_Corp\n- Technology Engineering FTE: ActiveDirectory, GitHub_Enterprise, AWS_Dev_Read, Jira_Users\n\nSegregation of Duties (SoD) Conflicts:\n- Cannot possess both AWS_Prod_Admin and AWS_Dev_Admin.\n- Cannot possess both Workday_Write and Payroll_Execute.`;
                     
